@@ -2,13 +2,21 @@
 #include <secret.h>
 
 #include <Wire.h>
-#include <SPI.h>
 #include <Adafruit_Sensor.h>
 
-#define BME680_NAME "BME680"
+// #define HAS_BME680 
+#define HAS_BME280
 
-#ifdef BME680_NAME
+
+#ifdef HAS_BME680
+# define SENSOR_NAME "BME680"
 #include "Adafruit_BME680.h"
+Adafruit_BME680 bme; // I2C
+#endif
+#ifdef HAS_BME280
+# define SENSOR_NAME "BME280"
+#include "Adafruit_BME280.h"
+Adafruit_BME280 bme; // I2C
 #endif
 
 #define SEALEVELPRESSURE_HPA (1013.25)
@@ -33,10 +41,9 @@
 InfluxDBClient client(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);
 
 // Declare Data point
-Point sensor(BME680_NAME);
+Point sensor(SENSOR_NAME);
 
 // BME680 sensor
-Adafruit_BME680 bme; // I2C
   
 void setup() {
     Serial.begin(115200);
@@ -70,32 +77,49 @@ void setup() {
     // Add tags to the data point
     sensor.addTag("device", DEVICE);
 
+    
+    bool status;
+    #ifdef HAS_BME680
+    status = bme.begin();
+    #endif
+    #ifdef HAS_BME280
+    status = bme.begin(0x76, &Wire);
+    #endif
 
-    if (!bme.begin()) {
-        Serial.println(F("Could not find a valid BME680 sensor, check wiring!"));
+    if (!status) {
+        Serial.println(F("Could not find a valid BME sensor, check wiring!"));
+        pinMode(LED_BUILTIN, OUTPUT);
+        digitalWrite(LED_BUILTIN, HIGH);
         while (1);
     }
     // Set up oversampling and filter initialization
+    #ifdef HAS_BME680
     bme.setTemperatureOversampling(BME680_OS_8X);
     bme.setHumidityOversampling(BME680_OS_2X);
     bme.setPressureOversampling(BME680_OS_4X);
     bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
     bme.setGasHeater(320, 150); // 320*C for 150 ms
+    #endif
+    #ifdef HAS_BME280
+    bme.setSampling(Adafruit_BME280::MODE_NORMAL, // Operating Mode
+                    Adafruit_BME280::SAMPLING_X8, // temperature
+                    Adafruit_BME280::SAMPLING_X2, // pressure
+                    Adafruit_BME280::SAMPLING_X4, // humidity
+                    Adafruit_BME280::FILTER_OFF);
+    #endif
+
 }
 
 void loop() {
     // Clear fields for reusing the point. Tags will remain the same as set above.
     sensor.clearFields();
 
+    #ifdef HAS_BME680
     unsigned long endTime = bme.beginReading();
     if (endTime == 0) {
         Serial.println(F("Failed to begin reading :("));
         return;
     }
-    Serial.print(F("Reading started at "));
-    Serial.print(millis());
-    Serial.print(F(" and will finish at "));
-    Serial.println(endTime);
 
     if (!bme.endReading()) {
         Serial.println(F("Failed to complete reading :("));
@@ -107,6 +131,13 @@ void loop() {
     sensor.addField("humidity", bme.humidity);
     sensor.addField("gas_resistance", bme.gas_resistance / 1000.0);
     sensor.addField("altitude", bme.readAltitude(SEALEVELPRESSURE_HPA));
+    #endif
+    #ifdef HAS_BME280
+    sensor.addField("temperature", bme.readTemperature());
+    sensor.addField("pressure", bme.readPressure() / 100.0);
+    sensor.addField("humidity", bme.readHumidity());
+    sensor.addField("altitude", bme.readAltitude(SEALEVELPRESSURE_HPA));
+    #endif
   
     // Print what are we exactly writing
     Serial.print("Writing: ");
